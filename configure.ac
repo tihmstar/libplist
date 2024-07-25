@@ -66,7 +66,30 @@ case ${host_os} in
     AC_MSG_RESULT([${host_os}])
     win32=true
     ;;
-  darwin*|*android*)
+  darwin* )
+    AC_MSG_RESULT([${host_os}])
+    AC_CHECK_LIB([c++], [_ZNSt13bad_exceptionD0Ev],[have_libcpp=true],[have_libcpp=false])
+    if test "x$have_libcpp" == "xtrue"; then
+      ORIG_CXXFLAGS=${CXXFLAGS}
+      CXXFLAGS+=" -stdlib=libc++" # normal case
+      AC_SUBST([cpp_lib_flags], [-stdlib=libc++])
+      AC_LANG_PUSH([C++])
+      AC_CHECK_HEADER([string],[have_libcpp=true],[
+        # iOS 5 and 6 have both, libc++ and libstdc++, but the former is not actually yet usable
+        have_libcpp=false
+        CXXFLAGS=${ORIG_CXXFLAGS}
+      ])
+      AC_LANG_POP([C++])
+    fi
+    if test "x$have_libcpp" != "xtrue"; then
+      AC_CHECK_LIB([stdc++], [_ZNSt13bad_exceptionD0Ev],[have_libstdcpp=true],[have_libstdcpp=false])
+      if test "x$have_libstdcpp" == "xtrue"; then
+        CXXFLAGS+=" -stdlib=libstdc++" # iOS <= 6 (very old lib) case
+        AC_SUBST([cpp_lib_flags], [-stdlib=libstdc++])
+      fi
+    fi
+    ;;
+  *android*)
     AC_MSG_RESULT([${host_os}])
     ;;
   *)
