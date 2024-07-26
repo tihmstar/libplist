@@ -30,7 +30,9 @@ jobs:
     - name: prepre buildroot
       run: mkdir $BUILDROOT
     - name: autogen
-      run: ./autogen.sh --enable-static --disable-shared
+      run: |
+        git tag | grep -v '\.' | while read t; do git tag -d $t; done
+        ./autogen.sh --enable-static --disable-shared
     - name: make
       run: make -j || make
     - name: make install
