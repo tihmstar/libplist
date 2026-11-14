@@ -176,7 +176,7 @@ AC_ARG_WITH([tools],
 AS_IF([test "x$build_tools" = "xyes"], [AC_DEFINE(BUILD_TOOLS, 1, [Define if we are building plist tools])])
 AM_CONDITIONAL(BUILD_TOOLS, test "x$build_tools" = "xyes")
 
-AS_COMPILER_FLAGS(GLOBAL_CFLAGS, "-Wall -Wextra -Wredundant-decls -Wshadow -Wpointer-arith  -Wwrite-strings -Wswitch-default -Wno-unused-parameter -Wno-strict-aliasing")
+AS_COMPILER_FLAGS(GLOBAL_CFLAGS, "-fPIC -Wall -Wextra -Wredundant-decls -Wshadow -Wpointer-arith  -Wwrite-strings -Wswitch-default -Wno-unused-parameter -Wno-strict-aliasing")
 GLOBAL_LDFLAGS=""
 
 AC_ARG_ENABLE(debug,
