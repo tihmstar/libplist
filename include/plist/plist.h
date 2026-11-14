@@ -144,6 +144,8 @@ extern "C"
         PLIST_ERR_PARSE        = -3,  /**< parsing of the input format failed */
         PLIST_ERR_NO_MEM       = -4,  /**< not enough memory to handle the operation */
         PLIST_ERR_IO           = -5,  /**< I/O error */
+        PLIST_ERR_CIRCULAR_REF = -6,  /**< circular reference detected */
+        PLIST_ERR_MAX_NESTING  = -7,  /**< maximum nesting depth exceeded */
         PLIST_ERR_UNKNOWN      = -255 /**< an unspecified error occurred */
     } plist_err_t;
 
@@ -173,6 +175,11 @@ extern "C"
         PLIST_OPT_PARTIAL_DATA = 1 << 1, /**< Print 24 bytes maximum of #PLIST_DATA values. If the data is longer than 24 bytes,  the first 16 and last 8 bytes will be written. Only valid for #PLIST_FORMAT_PRINT. */
         PLIST_OPT_NO_NEWLINE = 1 << 2, /**< Do not print a final newline character. Only valid for #PLIST_FORMAT_PRINT, #PLIST_FORMAT_LIMD, and #PLIST_FORMAT_PLUTIL. */
         PLIST_OPT_INDENT = 1 << 3, /**< Indent each line of output. Currently only #PLIST_FORMAT_PRINT and #PLIST_FORMAT_LIMD are supported. Use #PLIST_OPT_INDENT_BY() macro to specify the level of indentation. */
+        PLIST_OPT_COERCE = 1 << 4, /**< Coerce plist types that have no native JSON representation into JSON-compatible types.
+                                        #PLIST_DATE is converted to an ISO 8601 date string,
+                                        #PLIST_DATA is converted to a Base64-encoded string, and
+                                        #PLIST_UID is converted to an integer.
+                                        Only valid for #PLIST_FORMAT_JSON. Without this option, these types cause #PLIST_ERR_FORMAT. */
     } plist_write_options_t;
 
     /** To be used with #PLIST_OPT_INDENT - encodes the level of indentation for OR'ing it into the #plist_write_options_t bitfield. */
@@ -263,12 +270,11 @@ extern "C"
     /**
      * Create a new plist_t type #PLIST_DATE
      *
-     * @param sec the number of seconds since 01/01/2001
-     * @param usec the number of microseconds
+     * @param sec The number of seconds since 01/01/1970 (UNIX timestamp)
      * @return the created item
      * @sa #plist_type
      */
-    PLIST_API plist_t plist_new_date(int32_t sec, int32_t usec);
+    PLIST_API plist_t plist_new_unix_date(int64_t sec);
 
     /**
      * Create a new plist_t type #PLIST_UID
@@ -341,43 +347,77 @@ extern "C"
      *
      * @param node the node of type #PLIST_ARRAY
      * @param item the new item at index n. The array is responsible for freeing item when it is no longer needed.
-     * @param n the index of the item to get. Range is [0, array_size[. Assert if n is not in range.
+     * @param n the index of the item to get. Range is [0, array_size[.
+     *
+     * @return
+     * - PLIST_ERR_SUCCESS on success.
+     * - PLIST_ERR_INVALID_ARG if node is not an array, item is NULL, item is already
+     *   attached to a parent, or n is outside the valid range.
+     * - PLIST_ERR_NO_MEM if replacing the item fails due to memory allocation failure
+     *   and the original array element was restored successfully.
+     * - PLIST_ERR_UNKNOWN if an unexpected internal error occurred, including failure
+     *   to restore the original array element after insertion of the replacement failed.
      */
-    PLIST_API void plist_array_set_item(plist_t node, plist_t item, uint32_t n);
+    PLIST_API plist_err_t plist_array_set_item(plist_t node, plist_t item, uint32_t n);
 
     /**
      * Append a new item at the end of a #PLIST_ARRAY node.
      *
      * @param node the node of type #PLIST_ARRAY
      * @param item the new item. The array is responsible for freeing item when it is no longer needed.
+     *
+     * @return
+     * - PLIST_ERR_SUCCESS on success.
+     * - PLIST_ERR_INVALID_ARG if node is not an array, item is NULL, or item is
+     *   already attached to a parent.
+     * - PLIST_ERR_NO_MEM if memory allocation failed while appending the item.
+     * - PLIST_ERR_UNKNOWN if an unexpected internal error occurred.
      */
-    PLIST_API void plist_array_append_item(plist_t node, plist_t item);
+    PLIST_API plist_err_t plist_array_append_item(plist_t node, plist_t item);
 
     /**
      * Insert a new item at position n in a #PLIST_ARRAY node.
      *
      * @param node the node of type #PLIST_ARRAY
      * @param item the new item to insert. The array is responsible for freeing item when it is no longer needed.
-     * @param n The position at which the node will be stored. Range is [0, array_size[. Assert if n is not in range.
+     * @param n The position at which the node will be stored. Range is [0, array_size[.
+     *
+     * @return
+     * - PLIST_ERR_SUCCESS on success.
+     * - PLIST_ERR_INVALID_ARG if node is not an array, item is NULL, item is already
+     *   attached to a parent, or n is outside the valid insertion range.
+     * - PLIST_ERR_NO_MEM if memory allocation failed while inserting the item.
+     * - PLIST_ERR_UNKNOWN if an unexpected internal error occurred.
      */
-    PLIST_API void plist_array_insert_item(plist_t node, plist_t item, uint32_t n);
+    PLIST_API plist_err_t plist_array_insert_item(plist_t node, plist_t item, uint32_t n);
 
     /**
      * Remove an existing position in a #PLIST_ARRAY node.
      * Removed position will be freed using #plist_free.
      *
      * @param node the node of type #PLIST_ARRAY
-     * @param n The position to remove. Range is [0, array_size[. Assert if n is not in range.
+     * @param n The position to remove. Range is [0, array_size[.
+     *
+     * @return
+     * - PLIST_ERR_SUCCESS on success.
+     * - PLIST_ERR_INVALID_ARG if node is not an array or n is outside the valid range.
+     * - PLIST_ERR_UNKNOWN if an unexpected internal error occurred while removing
+     *   the item.
      */
-    PLIST_API void plist_array_remove_item(plist_t node, uint32_t n);
+    PLIST_API plist_err_t plist_array_remove_item(plist_t node, uint32_t n);
 
     /**
      * Remove a node that is a child node of a #PLIST_ARRAY node.
      * node will be freed using #plist_free.
      *
      * @param node The node to be removed from its #PLIST_ARRAY parent.
+     *
+     * @return
+     * - PLIST_ERR_SUCCESS on success.
+     * - PLIST_ERR_INVALID_ARG if item is NULL or not a child of a #PLIST_ARRAY
+     * - PLIST_ERR_UNKNOWN if an unexpected internal error occurred.
      */
-    PLIST_API void plist_array_item_remove(plist_t node);
+    PLIST_API plist_err_t plist_array_item_remove(plist_t item);
 
     /**
      * Create an iterator of a #PLIST_ARRAY node.
@@ -399,6 +439,12 @@ extern "C"
      */
     PLIST_API void plist_array_next_item(plist_t node, plist_array_iter iter, plist_t *item);
 
+    /**
+     * Free #PLIST_ARRAY iterator.
+     *
+     * @param iter Iterator to free.
+     */
+    PLIST_API void plist_array_free_iter(plist_array_iter iter);
 
     /********************************************
      *                                          *
@@ -437,6 +483,13 @@ extern "C"
     PLIST_API void plist_dict_next_item(plist_t node, plist_dict_iter iter, char **key, plist_t *val);
 
     /**
+     * Free #PLIST_DICT iterator.
+     *
+     * @param iter Iterator to free.
+     */
+    PLIST_API void plist_dict_free_iter(plist_dict_iter iter);
+
+    /**
      * Get key associated key to an item. Item must be member of a dictionary.
      *
      * @param node the item
@@ -470,17 +523,32 @@ extern "C"
      * @param node the node of type #PLIST_DICT
      * @param item the new item associated to key
      * @param key the identifier of the item to set.
+     *
+     * @return
+     * - PLIST_ERR_SUCCESS on success.
+     * - PLIST_ERR_INVALID_ARG if node is not a dictionary, key is NULL, item is NULL,
+     *   or item is already attached to a parent.
+     * - PLIST_ERR_NO_MEM if memory allocation failed while creating or inserting the
+     *   key/value pair.
+     * - PLIST_ERR_UNKNOWN if an unexpected internal error occurred.
      */
-    PLIST_API void plist_dict_set_item(plist_t node, const char* key, plist_t item);
+    PLIST_API plist_err_t plist_dict_set_item(plist_t node, const char* key, plist_t item);
 
     /**
      * Remove an existing position in a #PLIST_DICT node.
      * Removed position will be freed using #plist_free
      *
      * @param node the node of type #PLIST_DICT
-     * @param key The identifier of the item to remove. Assert if identifier is not present.
+     * @param key The identifier of the item to remove
+     *
+     * @return
+     * - PLIST_ERR_SUCCESS on success.
+     * - PLIST_ERR_INVALID_ARG if node is not a dictionary, key is NULL, or no item
+     *   with the given key exists.
+     * - PLIST_ERR_UNKNOWN if an unexpected internal error occurred while removing
+     *   the item.
      */
-    PLIST_API void plist_dict_remove_item(plist_t node, const char* key);
+    PLIST_API plist_err_t plist_dict_remove_item(plist_t node, const char* key);
 
     /**
      * Merge a dictionary into another. This will add all key/value pairs
@@ -489,8 +557,16 @@ extern "C"
      *
      * @param target pointer to an existing node of type #PLIST_DICT
      * @param source node of type #PLIST_DICT that should be merged into target
+     *
+     * @return
+     * - PLIST_ERR_SUCCESS on success.
+     * - PLIST_ERR_INVALID_ARG if target is NULL, source is NULL, source is not a
+     *   dictionary, or *target is not NULL and does not point to a dictionary.
+     * - PLIST_ERR_NO_MEM if memory allocation failed while creating the target
+     *   dictionary or copying items from source.
+     * - PLIST_ERR_UNKNOWN if an unexpected internal error occurred.
      */
-    PLIST_API void plist_dict_merge(plist_t *target, plist_t source);
+    PLIST_API plist_err_t plist_dict_merge(plist_t *target, plist_t source);
 
     /**
      * Get a boolean value from a given #PLIST_DICT entry.
@@ -775,10 +851,9 @@ extern "C"
      * This function does nothing if node is not of type #PLIST_DATE
      *
      * @param node the node
-     * @param sec a pointer to an int32_t variable. Represents the number of seconds since 01/01/2001.
-     * @param usec a pointer to an int32_t variable. Represents the number of microseconds
+     * @param sec a pointer to an int64_t variable. Represents the number of seconds since 01/01/1970 (UNIX timestamp).
      */
-    PLIST_API void plist_get_date_val(plist_t node, int32_t * sec, int32_t * usec);
+    PLIST_API void plist_get_unix_date_val(plist_t node, int64_t *sec);
 
     /**
      * Get the value of a #PLIST_UID node.
@@ -867,10 +942,9 @@ extern "C"
      * Forces type of node to #PLIST_DATE
      *
      * @param node the node
-     * @param sec the number of seconds since 01/01/2001
-     * @param usec the number of microseconds
+     * @param sec the number of seconds since 01/01/1970 (UNIX timestamp)
      */
-    PLIST_API void plist_set_date_val(plist_t node, int32_t sec, int32_t usec);
+    PLIST_API void plist_set_unix_date_val(plist_t node, int64_t sec);
 
     /**
      * Set the value of a node.
@@ -926,6 +1000,29 @@ extern "C"
     PLIST_API plist_err_t plist_to_json(plist_t plist, char **plist_json, uint32_t* length, int prettify);
 
     /**
+     * Export the #plist_t structure to JSON format with extended options.
+     *
+     * When \a PLIST_OPT_COMPACT is set in \a options, the resulting JSON
+     * will be non-prettified.
+     *
+     * When \a PLIST_OPT_COERCE is set in \a options, plist types that have
+     * no native JSON representation are converted to JSON-compatible types
+     * instead of returning #PLIST_ERR_FORMAT:
+     * - #PLIST_DATE is serialized as an ISO 8601 date string
+     * - #PLIST_DATA is serialized as a Base64-encoded string
+     * - #PLIST_UID is serialized as an integer
+     *
+     * @param plist the root node to export
+     * @param plist_json a pointer to a char* buffer. This function allocates the memory,
+     *     caller is responsible for freeing it.
+     * @param length a pointer to an uint32_t variable. Represents the length of the allocated buffer.
+     * @param options One or more bitwise ORed values of #plist_write_options_t.
+     * @return PLIST_ERR_SUCCESS on success or a #plist_err_t on failure
+     * @note Use plist_mem_free() to free the allocated memory.
+     */
+    PLIST_API plist_err_t plist_to_json_with_options(plist_t plist, char **plist_json, uint32_t* length, plist_write_options_t options);
+
+    /**
      * Export the #plist_t structure to OpenStep format.
      *
      * @param plist the root node to export
@@ -937,6 +1034,30 @@ extern "C"
      * @note Use plist_mem_free() to free the allocated memory.
      */
     PLIST_API plist_err_t plist_to_openstep(plist_t plist, char **plist_openstep, uint32_t* length, int prettify);
+
+    /**
+     * Export the #plist_t structure to OpenStep format with extended options.
+     *
+     * When \a PLIST_OPT_COMPACT is set in \a options, the resulting OpenStep output
+     * will be non-prettified.
+     *
+     * When \a PLIST_OPT_COERCE is set in \a options, plist types that have
+     * no native OpenStep representation are converted to OpenStep-compatible types
+     * instead of returning #PLIST_ERR_FORMAT:
+     * - #PLIST_BOOLEAN is serialized as a 1 or 0
+     * - #PLIST_DATE is serialized as an ISO 8601 date string
+     * - #PLIST_NULL is serialized as string 'NULL'
+     * - #PLIST_UID is serialized as an integer
+     *
+     * @param plist the root node to export
+     * @param plist_openstep a pointer to a char* buffer. This function allocates the memory,
+     *     caller is responsible for freeing it.
+     * @param length a pointer to an uint32_t variable. Represents the length of the allocated buffer.
+     * @param options One or more bitwise ORed values of #plist_write_options_t.
+     * @return PLIST_ERR_SUCCESS on success or a #plist_err_t on failure
+     * @note Use plist_mem_free() to free the allocated memory.
+     */
+    PLIST_API plist_err_t plist_to_openstep_with_options(plist_t plist, char **plist_openstep, uint32_t* length, plist_write_options_t options);
 
 
     /**
@@ -1213,16 +1334,15 @@ extern "C"
 
     /**
      * Helper function to compare the value of a PLIST_DATE node against
-     * a given set of seconds and fraction of a second since epoch.
+     * a given number of seconds since epoch (UNIX timestamp).
      *
      * @param datenode node of type PLIST_DATE
-     * @param cmpsec number of seconds since epoch to compare against
-     * @param cmpusec fraction of a second in microseconds to compare against
+     * @param cmpval Number of seconds to compare against (UNIX timestamp)
      * @return 0 if the node's date is equal to the supplied values,
      *         1 if the node's date is greater than the supplied values,
      *         or -1 if the node's date is less than the supplied values.
      */
-    PLIST_API int plist_date_val_compare(plist_t datenode, int32_t cmpsec, int32_t cmpusec);
+    PLIST_API int plist_unix_date_val_compare(plist_t datenode, int64_t cmpval);
 
     /**
      * Helper function to compare the value of a PLIST_STRING node against
@@ -1381,6 +1501,68 @@ extern "C"
      * @return The libplist version as static ascii string
      */
     PLIST_API const char* libplist_version();
+
+
+    /********************************************
+     *                                          *
+     *              Deprecated API              *
+     *                                          *
+     ********************************************/
+
+    /**
+     * Create a new plist_t type #PLIST_DATE
+     *
+     * @deprecated Deprecated. Use plist_new_unix_date instead.
+     *
+     * @param sec the number of seconds since 01/01/2001
+     * @param usec the number of microseconds
+     * @return the created item
+     * @sa #plist_type
+     */
+    PLIST_WARN_DEPRECATED("use plist_new_unix_date instead")
+    PLIST_API plist_t plist_new_date(int32_t sec, int32_t usec);
+
+    /**
+     * Get the value of a #PLIST_DATE node.
+     * This function does nothing if node is not of type #PLIST_DATE
+     *
+     * @deprecated Deprecated. Use plist_get_unix_date_val instead.
+     *
+     * @param node the node
+     * @param sec a pointer to an int32_t variable. Represents the number of seconds since 01/01/2001.
+     * @param usec a pointer to an int32_t variable. Represents the number of microseconds
+     */
+    PLIST_WARN_DEPRECATED("use plist_get_unix_date_val instead")
+    PLIST_API void plist_get_date_val(plist_t node, int32_t * sec, int32_t * usec);
+
+    /**
+     * Set the value of a node.
+     * Forces type of node to #PLIST_DATE
+     *
+     * @deprecated Deprecated. Use plist_set_unix_date_val instead.
+     *
+     * @param node the node
+     * @param sec the number of seconds since 01/01/2001
+     * @param usec the number of microseconds
+     */
+    PLIST_WARN_DEPRECATED("use plist_set_unix_date_val instead")
+    PLIST_API void plist_set_date_val(plist_t node, int32_t sec, int32_t usec);
+
+    /**
+     * Helper function to compare the value of a PLIST_DATE node against
+     * a given set of seconds and fraction of a second since epoch.
+     *
+     * @deprecated Deprecated. Use plist_unix_date_val_compare instead.
+     *
+     * @param datenode node of type PLIST_DATE
+     * @param cmpsec number of seconds since epoch to compare against
+     * @param cmpusec fraction of a second in microseconds to compare against
+     * @return 0 if the node's date is equal to the supplied values,
+     *         1 if the node's date is greater than the supplied values,
+     *         or -1 if the node's date is less than the supplied values.
+     */
+    PLIST_WARN_DEPRECATED("use plist_unix_date_val_compare instead")
+    PLIST_API int plist_date_val_compare(plist_t datenode, int32_t cmpsec, int32_t cmpusec);
 
     /*@}*/
 

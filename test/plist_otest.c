@@ -66,7 +66,12 @@ int main(int argc, char *argv[])
     stat(file_in, &filestats);
     size_in = filestats.st_size;
     plist_ostep = (char *) malloc(sizeof(char) * (size_in + 1));
-    fread(plist_ostep, sizeof(char), size_in, iplist);
+    if (fread(plist_ostep, sizeof(char), size_in, iplist) != (size_t)size_in) {
+        printf("Failed to read input file\n");
+        fclose(iplist);
+        free(plist_ostep);
+        return 3;
+    }
     fclose(iplist);
     plist_ostep[size_in] = 0;
 

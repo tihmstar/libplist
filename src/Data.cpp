@@ -40,6 +40,8 @@ Data::Data(const PList::Data& d) : Node(PLIST_DATA)
 
 Data& Data::operator=(const PList::Data& b)
 {
+    if (this == &b) return *this;
+
     plist_free(_node);
     _node = plist_copy(b.GetPlist());
     return *this;
@@ -48,6 +50,11 @@ Data& Data::operator=(const PList::Data& b)
 Data::Data(const std::vector<char>& buff) : Node(PLIST_DATA)
 {
     plist_set_data_val(_node, &buff[0], buff.size());
+}
+
+Data::Data(const char* buff, uint64_t size) : Node(PLIST_DATA)
+{
+    plist_set_data_val(_node, buff, size);
 }
 
 Data::~Data()
@@ -66,14 +73,10 @@ void Data::SetValue(const std::vector<char>& buff)
 
 std::vector<char> Data::GetValue() const
 {
-    char* buff = NULL;
     uint64_t length = 0;
-    plist_get_data_val(_node, &buff, &length);
+    const char* buff = plist_get_data_ptr(_node, &length);
     std::vector<char> ret(buff, buff + length);
-    delete buff;
     return ret;
 }
-
-
 
 }  // namespace PList

@@ -1,0 +1,7 @@
+Package: libplist++-dev
+Version: @DEB_VERSION@
+Architecture: @DEB_ARCH@
+Depends: libplist++4v5 (= @DEB_VERSION@)
+Section: Development
+Priority: standard
+Description: C++ Library for handling Apple binary and XML property lists - devel

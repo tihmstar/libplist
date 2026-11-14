@@ -1,0 +1,7 @@
+Package: libplist-utils
+Version: @DEB_VERSION@
+Architecture: @DEB_ARCH@
+Depends: libplist4 (>= @DEB_VERSION@)
+Section: Utilities
+Priority: standard
+Description: Apple property list converter

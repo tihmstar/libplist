@@ -1,0 +1,6 @@
+Package: libplist4
+Version: @DEB_VERSION@
+Architecture: @DEB_ARCH@
+Section: Libraries
+Priority: standard
+Description: Library for handling Apple binary and XML property lists

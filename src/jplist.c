@@ -38,6 +38,10 @@
 #include "plist.h"
 #include "strbuf.h"
 #include "jsmn.h"
+#include "hashtable.h"
+#include "base64.h"
+#include "time64.h"
+#include "common.h"
 
 #ifdef DEBUG
 static int plist_json_debug = 0;
@@ -72,8 +76,10 @@ void plist_json_set_debug(int debug)
 }
 
 #ifndef HAVE_STRNDUP
+#ifndef _MSC_VER
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wshadow"
+#endif
 static char* strndup(const char* str, size_t len)
 {
     char *newstr = (char *)malloc(len+1);
@@ -83,34 +89,12 @@ static char* strndup(const char* str, size_t len)
     }
     return newstr;
 }
+#ifndef _MSC_VER
 #pragma GCC diagnostic pop
 #endif
+#endif
 
-static size_t dtostr(char *buf, size_t bufsize, double realval)
-{
-    size_t len = 0;
-    if (isnan(realval)) {
-        len = snprintf(buf, bufsize, "nan");
-    } else if (isinf(realval)) {
-        len = snprintf(buf, bufsize, "%cinfinity", (realval > 0.0) ? '+' : '-');
-    } else if (realval == 0.0f) {
-        len = snprintf(buf, bufsize, "0.0");
-    } else {
-        size_t i = 0;
-        len = snprintf(buf, bufsize, "%.*g", 17, realval);
-        for (i = 0; buf && i < len; i++) {
-            if (buf[i] == ',') {
-                buf[i] = '.';
-                break;
-            } else if (buf[i] == '.') {
-                break;
-            }
-        }
-    }
-    return len;
-}
-
-static plist_err_t node_to_json(node_t node, bytearray_t **outbuf, uint32_t depth, int prettify)
+static plist_err_t node_to_json(node_t node, bytearray_t **outbuf, uint32_t depth, int prettify, int coerce)
 {
     plist_data_t node_data = NULL;
 
@@ -206,7 +190,7 @@ static plist_err_t node_to_json(node_t node, bytearray_t **outbuf, uint32_t dept
                     str_buf_append(*outbuf, "  ", 2);
                 }
             }
-            plist_err_t res = node_to_json(ch, outbuf, depth+1, prettify);
+            plist_err_t res = node_to_json(ch, outbuf, depth+1, prettify, coerce);
             if (res < 0) {
                 return res;
             }
@@ -234,7 +218,7 @@ static plist_err_t node_to_json(node_t node, bytearray_t **outbuf, uint32_t dept
                     str_buf_append(*outbuf, "  ", 2);
                 }
             }
-            plist_err_t res = node_to_json(ch, outbuf, depth+1, prettify);
+            plist_err_t res = node_to_json(ch, outbuf, depth+1, prettify, coerce);
             if (res < 0) {
                 return res;
             }
@@ -255,17 +239,64 @@ static plist_err_t node_to_json(node_t node, bytearray_t **outbuf, uint32_t dept
         str_buf_append(*outbuf, "}", 1);
         } break;
     case PLIST_DATA:
-        // NOT VALID FOR JSON
-        PLIST_JSON_WRITE_ERR("PLIST_DATA type is not valid for JSON format\n");
-        return PLIST_ERR_FORMAT;
+        if (coerce) {
+            size_t b64_len = ((node_data->length + 2) / 3) * 4;
+            char *b64_buf = (char*)malloc(b64_len + 1);
+            if (!b64_buf) {
+                return PLIST_ERR_NO_MEM;
+            }
+            size_t actual_len = base64encode(b64_buf, node_data->buff, node_data->length);
+            str_buf_append(*outbuf, "\"", 1);
+            str_buf_append(*outbuf, b64_buf, actual_len);
+            str_buf_append(*outbuf, "\"", 1);
+            free(b64_buf);
+        } else {
+            PLIST_JSON_WRITE_ERR("PLIST_DATA type is not valid for JSON format\n");
+            return PLIST_ERR_FORMAT;
+        }
+        break;
     case PLIST_DATE:
-        // NOT VALID FOR JSON
-        PLIST_JSON_WRITE_ERR("PLIST_DATE type is not valid for JSON format\n");
-        return PLIST_ERR_FORMAT;
+        if (coerce) {
+            Time64_T timev;
+            if (plist_real_to_time64(node_data->realval, &timev) < 0) {
+                PLIST_JSON_WRITE_ERR("Encountered invalid date value %f\n", node_data->realval);
+                return PLIST_ERR_INVALID_ARG;
+            }
+            struct TM _btime;
+            struct TM *btime = gmtime64_r(&timev, &_btime);
+            char datebuf[32];
+            size_t datelen = 0;
+            if (btime) {
+                struct tm _tmcopy;
+                copy_TM64_to_tm(btime, &_tmcopy);
+                datelen = strftime(datebuf, sizeof(datebuf), "%Y-%m-%dT%H:%M:%SZ", &_tmcopy);
+            }
+            if (datelen <= 0) {
+                datelen = snprintf(datebuf, sizeof(datebuf), "1970-01-01T00:00:00Z");
+            }
+            str_buf_append(*outbuf, "\"", 1);
+            str_buf_append(*outbuf, datebuf, datelen);
+            str_buf_append(*outbuf, "\"", 1);
+        } else {
+            PLIST_JSON_WRITE_ERR("PLIST_DATE type is not valid for JSON format\n");
+            return PLIST_ERR_FORMAT;
+        }
+        break;
     case PLIST_UID:
-        // NOT VALID FOR JSON
-        PLIST_JSON_WRITE_ERR("PLIST_UID type is not valid for JSON format\n");
-        return PLIST_ERR_FORMAT;
+        if (coerce) {
+            val = (char*)malloc(64);
+            if (node_data->length == 16) {
+                val_len = snprintf(val, 64, "%" PRIu64, node_data->intval);
+            } else {
+                val_len = snprintf(val, 64, "%" PRIi64, node_data->intval);
+            }
+            str_buf_append(*outbuf, val, val_len);
+            free(val);
+        } else {
+            PLIST_JSON_WRITE_ERR("PLIST_UID type is not valid for JSON format\n");
+            return PLIST_ERR_FORMAT;
+        }
+        break;
     default:
         return PLIST_ERR_UNKNOWN;
     }
@@ -273,56 +304,32 @@ static plist_err_t node_to_json(node_t node, bytearray_t **outbuf, uint32_t dept
     return PLIST_ERR_SUCCESS;
 }
 
-#define PO10i_LIMIT (INT64_MAX/10)
-
-/* based on https://stackoverflow.com/a/4143288 */
-static int num_digits_i(int64_t i)
-{
-    int n;
-    int64_t po10;
-    n=1;
-    if (i < 0) {
-        i = (i == INT64_MIN) ? INT64_MAX : -i;
-        n++;
-    }
-    po10=10;
-    while (i>=po10) {
-        n++;
-        if (po10 > PO10i_LIMIT) break;
-        po10*=10;
-    }
-    return n;
-}
-
-#define PO10u_LIMIT (UINT64_MAX/10)
-
-/* based on https://stackoverflow.com/a/4143288 */
-static int num_digits_u(uint64_t i)
-{
-    int n;
-    uint64_t po10;
-    n=1;
-    po10=10;
-    while (i>=po10) {
-        n++;
-        if (po10 > PO10u_LIMIT) break;
-        po10*=10;
-    }
-    return n;
-}
-
-static plist_err_t node_estimate_size(node_t node, uint64_t *size, uint32_t depth, int prettify)
+static plist_err_t _node_estimate_size(node_t node, uint64_t *size, uint32_t depth, int prettify, int coerce, hashtable_t *visited)
 {
     plist_data_t data;
     if (!node) {
         return PLIST_ERR_INVALID_ARG;
     }
+
+    if (depth > PLIST_MAX_NESTING_DEPTH) {
+        PLIST_JSON_WRITE_ERR("maximum nesting depth (%u) exceeded\n", (unsigned)PLIST_MAX_NESTING_DEPTH);
+        return PLIST_ERR_MAX_NESTING;
+    }
+
+    if (hash_table_lookup(visited, node)) {
+        PLIST_JSON_WRITE_ERR("circular reference detected\n");
+        return PLIST_ERR_CIRCULAR_REF;
+    }
+
+    // mark as visited
+    hash_table_insert(visited, node, (void*)1);
+
     data = plist_get_data(node);
     if (node->children) {
         node_t ch;
         unsigned int n_children = node_n_children(node);
         for (ch = node_first_child(node); ch; ch = node_next_sibling(ch)) {
-            plist_err_t res = node_estimate_size(ch, size, depth + 1, prettify);
+            plist_err_t res = _node_estimate_size(ch, size, depth + 1, prettify, coerce, visited);
             if (res < 0) {
                 return res;
             }
@@ -379,17 +386,36 @@ static plist_err_t node_estimate_size(node_t node, uint64_t *size, uint32_t dept
             *size += 2;
             break;
         case PLIST_DATA:
-            // NOT VALID FOR JSON
-            PLIST_JSON_WRITE_ERR("PLIST_DATA type is not valid for JSON format\n");
-            return PLIST_ERR_FORMAT;
+            if (coerce) {
+                // base64 encoded string: 2 quotes + ((len+2)/3)*4 base64 chars
+                *size += 2 + ((data->length + 2) / 3) * 4;
+            } else {
+                PLIST_JSON_WRITE_ERR("PLIST_DATA type is not valid for JSON format\n");
+                return PLIST_ERR_FORMAT;
+            }
+            break;
         case PLIST_DATE:
-            // NOT VALID FOR JSON
-            PLIST_JSON_WRITE_ERR("PLIST_DATE type is not valid for JSON format\n");
-            return PLIST_ERR_FORMAT;
+            if (coerce) {
+                // ISO 8601 string: "YYYY-MM-DDTHH:MM:SSZ" = 22 chars max
+                *size += 24;
+            } else {
+                PLIST_JSON_WRITE_ERR("PLIST_DATE type is not valid for JSON format\n");
+                return PLIST_ERR_FORMAT;
+            }
+            break;
         case PLIST_UID:
-            // NOT VALID FOR JSON
-            PLIST_JSON_WRITE_ERR("PLIST_UID type is not valid for JSON format\n");
-            return PLIST_ERR_FORMAT;
+            if (coerce) {
+                // integer representation
+                if (data->length == 16) {
+                    *size += num_digits_u(data->intval);
+                } else {
+                    *size += num_digits_i((int64_t)data->intval);
+                }
+            } else {
+                PLIST_JSON_WRITE_ERR("PLIST_UID type is not valid for JSON format\n");
+                return PLIST_ERR_FORMAT;
+            }
+            break;
         default:
             PLIST_JSON_WRITE_ERR("invalid node type encountered\n");
             return PLIST_ERR_UNKNOWN;
@@ -398,7 +424,22 @@ static plist_err_t node_estimate_size(node_t node, uint64_t *size, uint32_t dept
     return PLIST_ERR_SUCCESS;
 }
 
+static plist_err_t node_estimate_size(node_t node, uint64_t *size, uint32_t depth, int prettify, int coerce)
+{
+    hashtable_t *visited = hash_table_new(plist_node_ptr_hash, plist_node_ptr_compare, NULL);
+    if (!visited) return PLIST_ERR_NO_MEM;
+    plist_err_t err = _node_estimate_size(node, size, depth, prettify, coerce, visited);
+    hash_table_destroy(visited);
+    return err;
+}
+
 plist_err_t plist_to_json(plist_t plist, char **plist_json, uint32_t* length, int prettify)
+{
+    plist_write_options_t opts = prettify ? PLIST_OPT_NONE : PLIST_OPT_COMPACT;
+    return plist_to_json_with_options(plist, plist_json, length, opts);
+}
+
+plist_err_t plist_to_json_with_options(plist_t plist, char **plist_json, uint32_t* length, plist_write_options_t options)
 {
     uint64_t size = 0;
     plist_err_t res;
@@ -412,7 +453,10 @@ plist_err_t plist_to_json(plist_t plist, char **plist_json, uint32_t* length, in
         return PLIST_ERR_FORMAT;
     }
 
-    res = node_estimate_size((node_t)plist, &size, 0, prettify);
+    int prettify = !(options & PLIST_OPT_COMPACT);
+    int coerce = options & PLIST_OPT_COERCE;
+
+    res = node_estimate_size((node_t)plist, &size, 0, prettify, coerce);
     if (res < 0) {
         return res;
     }
@@ -423,7 +467,7 @@ plist_err_t plist_to_json(plist_t plist, char **plist_json, uint32_t* length, in
         return PLIST_ERR_NO_MEM;
     }
 
-    res = node_to_json((node_t)plist, &outbuf, 0, prettify);
+    res = node_to_json((node_t)plist, &outbuf, 0, prettify, coerce);
     if (res < 0) {
         str_buf_free(outbuf);
         *plist_json = NULL;
@@ -435,6 +479,13 @@ plist_err_t plist_to_json(plist_t plist, char **plist_json, uint32_t* length, in
     }
 
     str_buf_append(outbuf, "\0", 1);
+
+    if (!outbuf->data) {
+        str_buf_free(outbuf);
+        *plist_json = NULL;
+        *length = 0;
+        return PLIST_ERR_NO_MEM;
+    }
 
     *plist_json = (char*)outbuf->data;
     *length = outbuf->len - 1;
@@ -448,10 +499,12 @@ plist_err_t plist_to_json(plist_t plist, char **plist_json, uint32_t* length, in
 typedef struct {
     jsmntok_t* tokens;
     int count;
+    plist_err_t err;
 } jsmntok_info_t;
 
 static int64_t parse_decimal(const char* str, const char* str_end, char** endp)
 {
+    const uint64_t po10i_limit = INT64_MAX / 10;
     uint64_t MAX = INT64_MAX;
     uint64_t x = 0;
     int is_neg = 0;
@@ -467,7 +520,7 @@ static int64_t parse_decimal(const char* str, const char* str_end, char** endp)
         MAX++;
     }
     while (*endp < str_end && isdigit(**endp)) {
-        if (x > PO10i_LIMIT) {
+        if (x > po10i_limit) {
             x = MAX;
             break;
         }
@@ -511,6 +564,10 @@ static plist_t parse_primitive(const char* js, jsmntok_info_t* ti, int* index)
         val = plist_new_bool(1);
     } else if (!strncmp("null", str_val, str_len)) {
         plist_data_t data = plist_new_plist_data();
+        if (!data) {
+            PLIST_JSON_ERR("%s: failed to allocate plist data\n", __func__);
+            return NULL;
+        }
         data->type = PLIST_NULL;
         val = plist_new_node(data);
     } else if (isdigit(str_val[0]) || (str_val[0] == '-' && str_val+1 < str_end && isdigit(str_val[1]))) {
@@ -569,6 +626,10 @@ static plist_t parse_primitive(const char* js, jsmntok_info_t* ti, int* index)
     } else {
         PLIST_JSON_ERR("%s: invalid primitive value '%.*s' encountered\n", __func__, (int)str_len, str_val);
     }
+    if (!val) {
+        PLIST_JSON_ERR("%s: failed to create node\n", __func__);
+        return NULL;
+    }
     (*index)++;
     return val;
 }
@@ -576,6 +637,7 @@ static plist_t parse_primitive(const char* js, jsmntok_info_t* ti, int* index)
 static char* unescape_string(const char* str_val, size_t str_len, size_t *new_len)
 {
     char* strval = strndup(str_val, str_len);
+    if (!strval) return NULL;
     size_t i = 0;
     while (i < str_len) {
         if (strval[i] == '\\' && i < str_len-1) {
@@ -666,40 +728,62 @@ static plist_t parse_string(const char* js, jsmntok_info_t* ti, int* index)
     plist_t node;
 
     plist_data_t data = plist_new_plist_data();
+    if (!data) {
+        free(strval);
+        PLIST_JSON_ERR("%s: failed to allocate plist data\n", __func__);
+        return NULL;
+    }
     data->type = PLIST_STRING;
     data->strval = strval;
     data->length = str_len;
     node = plist_new_node(data);
+    if (!node) {
+        plist_free_data(data);
+        PLIST_JSON_ERR("%s: failed to create node\n", __func__);
+        return NULL;
+    }
 
     (*index)++;
     return node;
 }
 
-static plist_t parse_object(const char* js, jsmntok_info_t* ti, int* index);
+static plist_t parse_object(const char* js, jsmntok_info_t* ti, int* index, uint32_t depth);
 
-static plist_t parse_array(const char* js, jsmntok_info_t* ti, int* index)
+static plist_t parse_array(const char* js, jsmntok_info_t* ti, int* index, uint32_t depth)
 {
     if (ti->tokens[*index].type != JSMN_ARRAY) {
         PLIST_JSON_ERR("%s: token type != JSMN_ARRAY\n", __func__);
+        ti->err = PLIST_ERR_PARSE;
+        return NULL;
+    }
+    if (depth > PLIST_MAX_NESTING_DEPTH) {
+        PLIST_JSON_ERR("%s: maximum nesting depth (%u) exceeded\n", __func__, (unsigned)PLIST_MAX_NESTING_DEPTH);
+        ti->err = PLIST_ERR_MAX_NESTING;
         return NULL;
     }
     plist_t arr = plist_new_array();
-    int num_tokens = ti->tokens[*index].size;
-    int num;
+    if (!arr) {
+        PLIST_JSON_ERR("%s: failed to create array node\n", __func__);
+        ti->err = PLIST_ERR_NO_MEM;
+        return NULL;
+    }
+    size_t num_tokens = ti->tokens[*index].size;
+    size_t num;
     int j = (*index)+1;
     for (num = 0; num < num_tokens; num++) {
         if (j >= ti->count) {
             PLIST_JSON_ERR("%s: token index out of valid range\n", __func__);
             plist_free(arr);
+            ti->err = PLIST_ERR_PARSE;
             return NULL;
         }
         plist_t val = NULL;
         switch (ti->tokens[j].type) {
             case JSMN_OBJECT:
-                val = parse_object(js, ti, &j);
+                val = parse_object(js, ti, &j, depth+1);
                 break;
             case JSMN_ARRAY:
-                val = parse_array(js, ti, &j);
+                val = parse_array(js, ti, &j, depth+1);
                 break;
             case JSMN_STRING:
                 val = parse_string(js, ti, &j);
@@ -712,8 +796,16 @@ static plist_t parse_array(const char* js, jsmntok_info_t* ti, int* index)
         }
         if (val) {
             plist_array_append_item(arr, val);
+            // if append failed, val still has no parent, free it and abort
+            if (((node_t)val)->parent == NULL) {
+                plist_free(val);
+                plist_free(arr);
+                ti->err = PLIST_ERR_NO_MEM;
+                return NULL;
+            }
         } else {
             plist_free(arr);
+            ti->err = PLIST_ERR_PARSE;
             return NULL;
         }
     }
@@ -721,30 +813,44 @@ static plist_t parse_array(const char* js, jsmntok_info_t* ti, int* index)
     return arr;
 }
 
-static plist_t parse_object(const char* js, jsmntok_info_t* ti, int* index)
+static plist_t parse_object(const char* js, jsmntok_info_t* ti, int* index, uint32_t depth)
 {
     if (ti->tokens[*index].type != JSMN_OBJECT) {
         PLIST_JSON_ERR("%s: token type != JSMN_OBJECT\n", __func__);
+        ti->err = PLIST_ERR_PARSE;
         return NULL;
     }
-    int num_tokens = ti->tokens[*index].size;
-    int num;
+    if (depth > PLIST_MAX_NESTING_DEPTH) {
+        PLIST_JSON_ERR("%s: maximum nesting depth (%u) exceeded\n", __func__, (unsigned)PLIST_MAX_NESTING_DEPTH);
+        ti->err = PLIST_ERR_MAX_NESTING;
+        return NULL;
+    }
+    size_t num_tokens = ti->tokens[*index].size;
+    size_t num;
     int j = (*index)+1;
     if (num_tokens % 2 != 0) {
         PLIST_JSON_ERR("%s: number of children must be even\n", __func__);
+        ti->err = PLIST_ERR_PARSE;
         return NULL;
     }
     plist_t obj = plist_new_dict();
+    if (!obj) {
+        PLIST_JSON_ERR("%s: failed to create dict node\n", __func__);
+        ti->err = PLIST_ERR_NO_MEM;
+        return NULL;
+    }
     for (num = 0; num < num_tokens; num++) {
         if (j+1 >= ti->count) {
             PLIST_JSON_ERR("%s: token index out of valid range\n", __func__);
             plist_free(obj);
+            ti->err = PLIST_ERR_PARSE;
             return NULL;
         }
         if (ti->tokens[j].type == JSMN_STRING) {
             char* key = unescape_string(js + ti->tokens[j].start, ti->tokens[j].end - ti->tokens[j].start, NULL);
             if (!key) {
                 plist_free(obj);
+                ti->err = PLIST_ERR_PARSE;
                 return NULL;
             }
             plist_t val = NULL;
@@ -752,10 +858,10 @@ static plist_t parse_object(const char* js, jsmntok_info_t* ti, int* index)
             num++;
             switch (ti->tokens[j].type) {
                 case JSMN_OBJECT:
-                    val = parse_object(js, ti, &j);
+                    val = parse_object(js, ti, &j, depth+1);
                     break;
                 case JSMN_ARRAY:
-                    val = parse_array(js, ti, &j);
+                    val = parse_array(js, ti, &j, depth+1);
                     break;
                 case JSMN_STRING:
                     val = parse_string(js, ti, &j);
@@ -768,15 +874,25 @@ static plist_t parse_object(const char* js, jsmntok_info_t* ti, int* index)
             }
             if (val) {
                 plist_dict_set_item(obj, key, val);
+                // if set failed, val still has no parent, free it and abort
+                if (((node_t)val)->parent == NULL) {
+                    plist_free(val);
+                    free(key);
+                    plist_free(obj);
+                    ti->err = PLIST_ERR_NO_MEM;
+                    return NULL;
+                }
             } else {
                 free(key);
                 plist_free(obj);
+                ti->err = PLIST_ERR_PARSE;
                 return NULL;
             }
             free(key);
         } else {
             PLIST_JSON_ERR("%s: keys must be of type STRING\n", __func__);
             plist_free(obj);
+            ti->err = PLIST_ERR_PARSE;
             return NULL;
         }
     }
@@ -796,14 +912,15 @@ plist_err_t plist_from_json(const char *json, uint32_t length, plist_t * plist)
 
     jsmn_parser parser;
     jsmn_init(&parser);
-    int maxtoks = 256;
-    int curtoks = 0;
+    unsigned int maxtoks = 256;
+    unsigned int curtoks = 0;
     int r = 0;
     jsmntok_t *tokens = NULL;
 
     do {
         jsmntok_t* newtokens = (jsmntok_t*)realloc(tokens, sizeof(jsmntok_t)*maxtoks);
         if (!newtokens) {
+            free(tokens);
             PLIST_JSON_ERR("%s: Out of memory\n", __func__);
             return PLIST_ERR_NO_MEM;
         }
@@ -813,8 +930,14 @@ plist_err_t plist_from_json(const char *json, uint32_t length, plist_t * plist)
 
         r = jsmn_parse(&parser, json, length, tokens, maxtoks);
         if (r == JSMN_ERROR_NOMEM) {
+            if (maxtoks > (unsigned int)INT_MAX - 16) {
+                free(tokens);
+                return PLIST_ERR_NO_MEM;
+            }
             maxtoks+=16;
             continue;
+        } else if (r < 0) {
+            break;
         }
     } while (r == JSMN_ERROR_NOMEM);
 
@@ -831,12 +954,16 @@ plist_err_t plist_from_json(const char *json, uint32_t length, plist_t * plist)
             PLIST_JSON_ERR("%s: Incomplete JSON, more bytes expected\n", __func__);
             free(tokens);
             return PLIST_ERR_PARSE;
+        case JSMN_ERROR_LIMIT:
+            PLIST_JSON_ERR("%s: Input data too large\n", __func__);
+            free(tokens);
+            return PLIST_ERR_PARSE;
         default:
             break;
     }
 
     int startindex = 0;
-    jsmntok_info_t ti = { tokens, parser.toknext };
+    jsmntok_info_t ti = { tokens, parser.toknext, PLIST_ERR_SUCCESS };
     switch (tokens[startindex].type) {
         case JSMN_PRIMITIVE:
             *plist = parse_primitive(json, &ti, &startindex);
@@ -845,14 +972,17 @@ plist_err_t plist_from_json(const char *json, uint32_t length, plist_t * plist)
             *plist = parse_string(json, &ti, &startindex);
             break;
         case JSMN_ARRAY:
-            *plist = parse_array(json, &ti, &startindex);
+            *plist = parse_array(json, &ti, &startindex, 0);
             break;
         case JSMN_OBJECT:
-            *plist = parse_object(json, &ti, &startindex);
+            *plist = parse_object(json, &ti, &startindex, 0);
             break;
         default:
             break;
     }
     free(tokens);
+    if (!*plist) {
+        return (ti.err != PLIST_ERR_SUCCESS) ? ti.err : PLIST_ERR_PARSE;
+    }
     return PLIST_ERR_SUCCESS;
 }

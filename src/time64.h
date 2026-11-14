@@ -11,6 +11,13 @@ typedef long long       Int64;
 typedef Int64           Time64_T;
 typedef Int64           Year;
 
+#ifndef TIME64_MIN
+#define TIME64_MIN ((Time64_T)INT64_MIN)
+#endif
+
+#ifndef TIME64_MAX
+#define TIME64_MAX ((Time64_T)INT64_MAX)
+#endif
 
 /* A copy of the tm struct but with a 64 bit year */
 struct TM64 {
@@ -58,11 +65,15 @@ Time64_T   timelocal64   (struct TM *);
 /* Not everyone has gm/localtime_r(), provide a replacement */
 #ifdef HAVE_LOCALTIME_R
 #    define LOCALTIME_R(clock, result) localtime_r(clock, result)
+#elif defined(_WIN32)
+#    define LOCALTIME_R(clock, result) (localtime_s(result, clock) ? NULL : result)
 #else
 #    define LOCALTIME_R(clock, result) fake_localtime_r(clock, result)
 #endif
 #ifdef HAVE_GMTIME_R
 #    define GMTIME_R(clock, result)    gmtime_r(clock, result)
+#elif defined (_WIN32)
+#    define GMTIME_R(clock, result)    (gmtime_s(result, clock) ? NULL : result)
 #else
 #    define GMTIME_R(clock, result)    fake_gmtime_r(clock, result)
 #endif

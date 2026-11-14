@@ -49,6 +49,16 @@
   #endif
 #endif
 
+#include "node.h"
+
+#ifndef PLIST_MAX_NESTING_DEPTH
+#ifdef NODE_MAX_DEPTH
+#define PLIST_MAX_NESTING_DEPTH NODE_MAX_DEPTH
+#else
+#define PLIST_MAX_NESTING_DEPTH 512
+#endif
+#endif
+
 #include "plist/plist.h"
 
 struct plist_data_s
@@ -80,5 +90,18 @@ extern plist_err_t plist_write_to_string_plutil(plist_t plist, char **output, ui
 extern plist_err_t plist_write_to_stream_default(plist_t plist, FILE *stream, plist_write_options_t options);
 extern plist_err_t plist_write_to_stream_limd(plist_t plist, FILE *stream, plist_write_options_t options);
 extern plist_err_t plist_write_to_stream_plutil(plist_t plist, FILE *stream, plist_write_options_t options);
+
+static inline unsigned int plist_node_ptr_hash(const void *ptr)
+{
+    uintptr_t h = (uintptr_t)ptr;
+    h ^= (h >> 16);
+    h *= 0x85ebca6b;
+    return (unsigned int)h;
+}
+
+static inline int plist_node_ptr_compare(const void *a, const void *b)
+{
+    return a == b;
+}
 
 #endif

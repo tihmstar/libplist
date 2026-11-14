@@ -35,11 +35,14 @@ Integer::Integer(plist_t node, Node* parent) : Node(node, parent)
 
 Integer::Integer(const PList::Integer& i) : Node(PLIST_INT)
 {
-    plist_set_uint_val(_node, i.GetValue());
+    plist_free(_node);
+    _node = plist_copy(i.GetPlist());
 }
 
 Integer& Integer::operator=(const PList::Integer& i)
 {
+    if (this == &i) return *this;
+
     plist_free(_node);
     _node = plist_copy(i.GetPlist());
     return *this;

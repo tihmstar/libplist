@@ -21,6 +21,7 @@ libplist_2_0_la_SOURCES = \
 	ptrarray.c ptrarray.h \
 	time64.c time64.h \
 	time64_limits.h \
+	common.c common.h \
 	xplist.c \
 	bplist.c \
 	jsmn.c jsmn.h \

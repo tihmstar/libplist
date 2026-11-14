@@ -77,8 +77,9 @@ unsigned char *base64decode(const char *buf, size_t *size)
 	size_t len = (*size > 0) ? *size : strlen(buf);
 	if (len <= 0) return NULL;
 	unsigned char *outbuf = (unsigned char*)malloc((len/4)*3+3);
+	if (!outbuf) return NULL;
 	const char *ptr = buf;
-	int p = 0;
+	size_t p = 0;
 	int wv, w1, w2, w3, w4;
 	int tmpval[4];
 	int tmpcnt = 0;

@@ -40,7 +40,7 @@ static void dictionary_fill(Dictionary *_this, std::map<std::string,Node*> &map,
         plist_dict_next_item(node, it, &key, &subnode);
         if (key && subnode)
             map[std::string(key)] = Node::FromPlist(subnode, _this);
-        delete key;
+        free(key);
     } while (subnode);
     free(it);
 }
@@ -51,7 +51,7 @@ Dictionary::Dictionary(plist_t node, Node* parent) : Structure(parent)
     dictionary_fill(this, _map, _node);
 }
 
-Dictionary::Dictionary(const PList::Dictionary& d)
+Dictionary::Dictionary(const PList::Dictionary& d) : Structure(d.GetParent())
 {
     for (Dictionary::iterator it = _map.begin(); it != _map.end(); it++)
     {
@@ -65,6 +65,8 @@ Dictionary::Dictionary(const PList::Dictionary& d)
 
 Dictionary& Dictionary::operator=(const PList::Dictionary& d)
 {
+    if (this == &d) return *this;
+
     for (Dictionary::iterator it = _map.begin(); it != _map.end(); it++)
     {
         plist_free(it->second->GetPlist());
@@ -176,9 +178,9 @@ void Dictionary::Remove(Node* node)
         plist_dict_get_item_key(node->GetPlist(), &key);
         plist_dict_remove_item(_node, key);
         std::string skey = key;
-        delete key;
+        free(key);
         _map.erase(skey);
-        delete node;
+        free(node);
     }
 }
 

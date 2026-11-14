@@ -15,7 +15,7 @@ dnl libtool versioning
 #                 changes to the signature and the semantic)
 #  ? :+1 : ?   == just internal changes
 # CURRENT : REVISION : AGE
-LIBPLIST_SO_VERSION=10:0:6
+LIBPLIST_SO_VERSION=12:0:0
 
 AC_SUBST(LIBPLIST_SO_VERSION)
 
@@ -94,40 +94,11 @@ case ${host_os} in
     ;;
   *)
     AC_MSG_RESULT([${host_os}])
-    AX_PTHREAD([], [AC_MSG_ERROR([pthread is required to build libplist])])
-    AC_CHECK_LIB(pthread, [pthread_once], [], [AC_MSG_ERROR([pthread with pthread_once required to build libplist])])
     ;;
 esac
 AM_CONDITIONAL(WIN32, test x$win32 = xtrue)
 
 AC_SEARCH_LIBS([fmin],[m])
-
-# Check if the C compiler supports __attribute__((constructor))
-AC_CACHE_CHECK([wether the C compiler supports constructor/destructor attributes],
-  ac_cv_attribute_constructor, [
-  ac_cv_attribute_constructor=no
-  AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
-    [[
-      #ifndef __has_attribute
-        #define __has_attribute(x) 0
-      #endif
-      #if !__has_attribute(constructor)
-        #error No constructor attribute
-      #endif
-      #if !__has_attribute(destructor)
-        #error No destructor attribute
-      #endif
-      static void __attribute__((constructor)) test_constructor(void) {
-      }
-      static void __attribute__((destructor)) test_destructor(void) {
-      }
-    ]], [])],
-    [ac_cv_attribute_constructor=yes]
-  )]
-)
-if test "$ac_cv_attribute_constructor" = "yes"; then
-  AC_DEFINE(HAVE_ATTRIBUTE_CONSTRUCTOR, 1, [Define if the C compiler supports constructor/destructor attributes])
-fi
 
 # Check if struct tm has a tm_gmtoff member
 AC_CACHE_CHECK(for tm_gmtoff in struct tm, ac_cv_struct_tm_gmtoff,
@@ -197,8 +168,16 @@ else
 fi
 AM_CONDITIONAL([HAVE_CYTHON],[test "x$cython_python_bindings" = "xyes"])
 
-AS_COMPILER_FLAGS(GLOBAL_CFLAGS, "-Wall -Wextra -Wredundant-decls -Wshadow -Wpointer-arith  -Wwrite-strings -Wswitch-default -Wno-unused-parameter -Wno-strict-aliasing $PTHREAD_CFLAGS")
-GLOBAL_LDFLAGS="$PTHREAD_LIBS"
+AC_ARG_WITH([tools],
+    [AS_HELP_STRING([--with-tools], [Build libplist tools. [default=yes]])],
+    [build_tools=${withval}],
+    [build_tools=yes]
+)
+AS_IF([test "x$build_tools" = "xyes"], [AC_DEFINE(BUILD_TOOLS, 1, [Define if we are building plist tools])])
+AM_CONDITIONAL(BUILD_TOOLS, test "x$build_tools" = "xyes")
+
+AS_COMPILER_FLAGS(GLOBAL_CFLAGS, "-Wall -Wextra -Wredundant-decls -Wshadow -Wpointer-arith  -Wwrite-strings -Wswitch-default -Wno-unused-parameter -Wno-strict-aliasing")
+GLOBAL_LDFLAGS=""
 
 AC_ARG_ENABLE(debug,
 AS_HELP_STRING([--enable-debug],
@@ -249,7 +228,11 @@ AC_ARG_WITH([tests],
             [AS_HELP_STRING([--without-tests],
             [Do not build libplist test suite (default is yes)])],
             [build_tests=${withval}],
-            [build_tests=yes])
+            [build_tests=${build_tools}])
+
+if test "x$build_tests" = "xyes" -a "x$build_tools" != "xyes"; then
+    AC_MSG_ERROR([Building the test suite requires plistutil. Reconfigure with --with-tools=yes to enable.])
+fi
 
 if test "x$build_fuzzers" = "xyes"; then
     if test "x$build_sanitizers" = "xno"; then
@@ -345,6 +328,12 @@ fi
 
 m4_ifdef([AM_SILENT_RULES],[AM_SILENT_RULES([yes])])
 
+AC_SUBST([DEB_VERSION], [${PACKAGE_VERSION}])
+
+if test "x${host_cpu}" == "xx86_64"; then
+  AC_SUBST([DEB_ARCH], [amd64])
+fi
+
 AC_CONFIG_FILES([
 Makefile
 libcnary/Makefile
@@ -358,6 +347,11 @@ cython/Makefile
 test/Makefile
 fuzz/Makefile
 doxygen.cfg
+debian/libplist++-dev.control
+debian/libplist++4v5.control
+debian/libplist-dev.control
+debian/libplist4.control
+debian/libplist-utils.control
 ])
 AC_OUTPUT
 
@@ -368,6 +362,8 @@ Configuration for $PACKAGE $VERSION:
   Install prefix ..........: $prefix
   Debug code ..............: $debug
   Python bindings .........: $cython_python_bindings
+  Build tools .............: $build_tools
+  Build test suite ........: $build_tests
 $EXTRA_CONF
   Now type 'make' to build $PACKAGE $VERSION,
   and then 'make install' for installation.

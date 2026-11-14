@@ -40,6 +40,8 @@ Key::Key(const PList::Key& k) : Node(PLIST_INT)
 
 Key& Key::operator=(const PList::Key& k)
 {
+    if (this == &k) return *this;
+
     plist_free(_node);
     _node = plist_copy(k.GetPlist());
     return *this;
@@ -69,7 +71,7 @@ std::string Key::GetValue() const
     char* s = NULL;
     plist_get_key_val(_node, &s);
     std::string ret = s ? s : "";
-    delete s;
+    free(s);
     return ret;
 }
 

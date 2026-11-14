@@ -57,7 +57,7 @@ std::string Structure::ToXml() const
     uint32_t length = 0;
     plist_to_xml(_node, &xml, &length);
     std::string ret(xml, xml+length);
-    delete xml;
+    free(xml);
     return ret;
 }
 
@@ -67,7 +67,7 @@ std::vector<char> Structure::ToBin() const
     uint32_t length = 0;
     plist_to_bin(_node, &bin, &length);
     std::vector<char> ret(bin, bin+length);
-    delete bin;
+    free(bin);
     return ret;
 }
 
@@ -77,7 +77,7 @@ void Structure::UpdateNodeParent(Node* node)
     if ( NULL != node->_parent )
     {
         plist_type type = plist_get_node_type(node->_parent);
-        if (PLIST_ARRAY ==type || PLIST_DICT == type )
+        if (PLIST_ARRAY == type || PLIST_DICT == type)
         {
             Structure* s = static_cast<Structure*>(node->_parent);
             s->Remove(node);
@@ -117,8 +117,27 @@ Structure* Structure::FromBin(const std::vector<char>& bin)
     plist_from_bin(&bin[0], bin.size(), &root);
 
     return ImportStruct(root);
-
 }
 
-}  // namespace PList
+Structure* Structure::FromBin(const char* bin, uint64_t size)
+{
+    plist_t root = NULL;
+    plist_from_bin(bin, size, &root);
 
+    return ImportStruct(root);
+}
+
+Structure* Structure::FromMemory(const std::vector<char>& buf, plist_format_t *format)
+{
+    return Structure::FromMemory(&buf[0], buf.size(), format);
+}
+
+Structure* Structure::FromMemory(const char* buf, uint64_t size, plist_format_t *format)
+{
+    plist_t root = NULL;
+    plist_from_memory(buf, size, &root, format);
+    return ImportStruct(root);
+}
+
+
+}  // namespace PList

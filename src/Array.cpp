@@ -40,7 +40,9 @@ static void array_fill(Array *_this, std::vector<Node*> &array, plist_t node)
     do {
         subnode = NULL;
         plist_array_next_item(node, iter, &subnode);
-        array.push_back( Node::FromPlist(subnode, _this) );
+        if (subnode) {
+            array.push_back( Node::FromPlist(subnode, _this) );
+        }
     } while (subnode);
     free(iter);
 }
@@ -51,7 +53,7 @@ Array::Array(plist_t node, Node* parent) : Structure(parent)
     array_fill(this, _array, _node);
 }
 
-Array::Array(const PList::Array& a)
+Array::Array(const PList::Array& a) : Structure(a.GetParent())
 {
     _array.clear();
     _node = plist_copy(a.GetPlist());
@@ -60,6 +62,8 @@ Array::Array(const PList::Array& a)
 
 Array& Array::operator=(const PList::Array& a)
 {
+    if (this == &a) return *this;
+
     plist_free(_node);
     for (size_t it = 0; it < _array.size(); it++) {
         delete _array.at(it);
@@ -86,6 +90,26 @@ Node* Array::Clone() const
 Node* Array::operator[](unsigned int array_index)
 {
     return _array.at(array_index);
+}
+
+Node* Array::Back()
+{
+    return _array.back();
+}
+
+Node* Array::back()
+{
+    return _array.back();
+}
+
+Node* Array::Front()
+{
+    return _array.front();
+}
+
+Node* Array::front()
+{
+    return _array.front();
 }
 
 Array::iterator Array::Begin()
@@ -132,7 +156,7 @@ size_t Array::size() const {
     return _array.size();
 }
 
-void Array::Append(Node* node)
+void Array::Append(const Node* node)
 {
     if (node)
     {
@@ -143,7 +167,12 @@ void Array::Append(Node* node)
     }
 }
 
-void Array::Insert(Node* node, unsigned int pos)
+void Array::Append(const Node& node)
+{
+    Append(&node);
+}
+
+void Array::Insert(const Node* node, unsigned int pos)
 {
     if (node)
     {
@@ -154,6 +183,11 @@ void Array::Insert(Node* node, unsigned int pos)
         it += pos;
         _array.insert(it, clone);
     }
+}
+
+void Array::Insert(const Node &node, unsigned int pos)
+{
+    Insert(&node, pos);
 }
 
 void Array::Remove(Node* node)
@@ -168,7 +202,7 @@ void Array::Remove(Node* node)
         std::vector<Node*>::iterator it = _array.begin();
         it += pos;
         _array.erase(it);
-        delete node;
+        free(node);
     }
 }
 
@@ -181,10 +215,15 @@ void Array::Remove(unsigned int pos)
     _array.erase(it);
 }
 
-unsigned int Array::GetNodeIndex(Node* node) const
+unsigned int Array::GetNodeIndex(const Node* node) const
 {
     std::vector<Node*>::const_iterator it = std::find(_array.begin(), _array.end(), node);
     return std::distance (_array.begin(), it);
+}
+
+unsigned int Array::GetNodeIndex(const Node& node) const
+{
+    return GetNodeIndex(&node);
 }
 
 }  // namespace PList

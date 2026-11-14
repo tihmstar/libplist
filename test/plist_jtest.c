@@ -66,7 +66,13 @@ int main(int argc, char *argv[])
     stat(file_in, filestats);
     size_in = filestats->st_size;
     plist_json = (char *) malloc(sizeof(char) * (size_in + 1));
-    fread(plist_json, sizeof(char), size_in, iplist);
+    if (fread(plist_json, sizeof(char), size_in, iplist) != (size_t)size_in) {
+        printf("Failed to read input file\n");
+        fclose(iplist);
+        free(plist_json);
+        free(filestats);
+        return 3;
+    }
     fclose(iplist);
     plist_json[size_in] = 0;
 
